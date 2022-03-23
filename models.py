@@ -4,7 +4,7 @@ import random
 # node_list=[]
 
 class Node:
-	def __init__(self,id,proposer_block,voterchains,genesis_proposer_blk,genesis_voterchains):
+	def __init__(self,id,proposer_block,voterchains,genesis_proposer_blk,genesis_voterchains,speed,hash_power):
 		self.id = id #id
 		self.txn_blockpool = [] #all txn blocks generated
 		self.proposer_block = proposer_block #proposer block on which mining happens at a time instant
@@ -17,7 +17,8 @@ class Node:
 		self.peers = [] #list of link object
 		self.orphan_blocks = [] # list of blocks whose parents not seen
 		self.timestamp_list = [] # list used to store arrival times of blocks
-
+		self.speed= speed
+		self.hash_power = hash_power
 
 
 		# self.speed= speed # fast(1) or slow(0) node

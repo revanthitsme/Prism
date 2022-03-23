@@ -12,15 +12,21 @@ z = int(input("Enter the percent of slow nodes(z): "))
 T_tx = int(input("Enter the mean interarrival time of transactions(T_tx): "))
 high_cpu = int(input("Enter the percent of High CPU nodes: "))
 B_Tx = int(input("Enter block interarrival time(in sec): "))
+m = int(input("Enter no of voter chains: "))
 
 # Setup--------------------------------------------------------------------------------------------------------
 
 # Global Variables
 env = simpy.Environment()
-stop_time = 5
+stop_time = 20
 all_balance=20 # initial balance of all users
 invalid_ratio = 0.1
 total_hash_power = 0 
+
+problist = []
+p = 1.0/(m+2)
+for _ in range(m+2):
+	problist.append(p)
 
 node_list=[]
 weights = []
@@ -39,10 +45,18 @@ for i in range(n):
 		hash_power = 1
 	total_hash_power = total_hash_power+hash_power
 
-	genesis_block = Block('gen','none',[],0,'none')
-	node = Node(i,speed,genesis_block,genesis_block,hash_power)
+	# genesis_block = Block('gen','none',[],0,'none')#?? none strings pettadu. Change it. 
+	genesis_proposer_block = Block('gen','proposer',-1,None,None,[],None,0,None)#gen
+
+	genesis_voterchains = []
+	for i in range(m):
+		s = "gen_"+str(i)
+		genesis_voter_block = Block(s,'voter',i,None,None,None,[[0,'gen']],0,None)#gen_i
+		genesis_voterchains.append(genesis_voter_block)
+
+	node = Node(i,genesis_proposer_block,genesis_voterchains,genesis_proposer_block,genesis_voterchains,speed,hash_power)#?? Different block genesis creation
 	node_list.append(node)
-	weights.append(1+9*speed)
+	weights.append(1+9*speed)#??what are these weights
 
 #network generation
 adj = networkgen(n,2,weights)
@@ -84,7 +98,7 @@ for i in range(n):
 # 		itr_blk = getpointertolevelleader(itr_blk.level-1)
 # 	return list(set(all_trxns))
 
-def get_txn_blks(blk):
+def get_txn_blks(node_id,blk):
 	proposer_chain = [node_list[node_id].genesis_proposer_blk]
 	voter_chains = node_list[node_id].voterchains
 	transaction_blks = []
@@ -105,7 +119,7 @@ def get_txn_blks(blk):
 		child_proposer_chain = []
 
 		for j in all_votes:
-			p = [x for x in j if x[0]=level]
+			p = [x for x in j if x[0]==level]
 			votes.extend(p)
 		
 		leader_blk = max(lst,key=lst.count)
@@ -121,16 +135,16 @@ def get_txn_blks(blk):
 	return transaction_blks
 		
 
-def get_trxns(blk):
-	trxn_blk_list = get_txn_blks(blk)
+def get_trxns(node_id,blk):
+	trxn_blk_list = get_txn_blks(node_id,blk)
 	trxn_list = []
 	for i in trxn_blk_list:
 		trxn_list.append(i.trxn_list)
 
 	return trxn_list
 
-def get_balance(blk):
-	trxn_list = get_trxns(blk)
+def get_balance(node_id,blk):
+	trxn_list = get_trxns(node_id,blk)
 	calc_bal = []
 	for i in range(n):
 		calc_bal.append(all_balance)
@@ -157,7 +171,7 @@ def is_valid(node_id,blk): # returns parent_blk if valid or returns 0
 		parent = get_parent(blk.parent_id,node_list[node_id].genesis_voterchains[blk.voterchainindex])
 	# parent = get_parent(blk.parent_id,node_list[node_id].genesis_blk)
 		if(parent!=0):
-			lastvoterlevel = parent.voterblock_content[:-1][0]
+			lastvoterlevel = parent.voterblock_content[-1:][0][0]
 			for i in blk.voterblock_content:
 				if i[0]!=lastvoterlevel+1:
 					return 0
@@ -212,9 +226,9 @@ def is_valid(node_id,blk): # returns parent_blk if valid or returns 0
 	# 		return 0 # balance goes negative
 	# return 0 # no parent
 
-def child_num(node_id,parent_id): # returns the number of childs of parent
-	parent = get_parent(parent_id,node_list[node_id].genesis_blk)
-	return len(parent.child_ptr_list)
+# def child_num(node_id,parent_id): # returns the number of childs of parent
+# 	parent = get_parent(parent_id,node_list[node_id].blk)
+# 	return len(parent.child_ptr_list)
 
 def add_orphans(node_id,blk): # adds the orphan blocks to blockchain
 	for child_blk in node_list[node_id].orphan_blocks:
@@ -245,11 +259,11 @@ def route_trxn(node_id,trxn,lat,f_id):
 	yield env.timeout(lat)
 	print('Node %d : got packet %s from %d at %f' % (node_id,trxn.id,f_id,env.now))
 	present = False
-	for i in node_list[node_id].trxn_pool:
+	for i in node_list[node_id].txn_pool:
 		if(i.id == trxn.id):
 			present=True
 	if(not present):
-		node_list[node_id].trxn_pool.append(trxn)
+		node_list[node_id].txn_pool.append(trxn)
 		for l in node_list[node_id].peers:
 			if(l.j!=f_id): 
 				d_ij = np.random.exponential(96/l.c_ij) #Should change here the latency value
@@ -272,7 +286,7 @@ def create_trxn(node_id):
 			vendor=vendor+1
 		valid = np.random.uniform()
 		pay=0
-		temp = get_balance(node_list[node_id].mining_blk)
+		temp = get_balance(node_id,node_list[node_id].proposer_block)
 		bal = temp[node_id]
 		# if valid<invalid_ratio:
 		# 	pay = bal+10000
@@ -285,7 +299,7 @@ def create_trxn(node_id):
 		print(str_trxn + ' at %f' % env.now)
 		real_trxn = Trxn(trxn_id,node_id,vendor,pay)
 		broadcast_trxn(node_id,real_trxn)
-		node_list[node_id].trxn_pool.append(real_trxn)
+		node_list[node_id].txn_pool.append(real_trxn)
 
 # block generation,broadcasting and routing------------------------------------------------------
 
@@ -308,11 +322,17 @@ def route_blk(node_id,blk,lat,f_id): #checked
 		#blk = Block(blk.blk_id,parent.blk_id,blk.trxn_list,parent.level+1,parent)
 		#parent.child_ptr_list.append(blk)
 		node_list[node_id].timestamp_list.append([blk.blk_id,blk.block_type,blk.voterchainindex,blk.level,env.now,blk.parent_id])
-		print('childs of parent = %d' %child_num(node_id,blk.parent_id))
+		# print('childs of parent = %d' %child_num(node_id,blk.parent_id))
 		for l in node_list[node_id].peers:
 			if(l.j!=f_id):
 				d_ij = np.random.exponential(96/l.c_ij)   
-				blk_size= len(blk.trxn_list)
+				blk_size = 0
+				if(blk.block_type=="proposer"):
+					blk_size = len(blk.proposer_content)
+				elif blk.block_type=="voter" :
+					blk_size = len(blk.voterblock_content)
+				elif blk.block_type =="transaction" :
+					blk_size= len(blk.trxn_list)
 				lat = (l.r_ij+d_ij+8*blk_size/l.c_ij)*(0.001)    # change latency information
 				print('routing block %s to %d with delay = %f' % (blk.blk_id,l.j,lat))
 				env.process(route_blk(l.j,blk,lat,node_id))
@@ -330,9 +350,13 @@ def route_blk(node_id,blk,lat,f_id): #checked
 				create_blk(node_id)
 			add_orphans(node_id,blk) # why add to orphan blocks??
 	else:
-		temp = get_parent(blk.parent_id,node_list[node_id].genesis_blk)
+		if(blk.block_type=="voter"):
+			gen = node_list[node_id].genesis_voterchains[blk.voterchainindex]
+		else:
+			gen = node_list[node_id].genesis_proposer_blk
+		temp = get_parent(blk.parent_id,gen)
 		if(temp==0):
-			blk = Block(blk.blk_id,blk.parent_id,blk.trxn_list,0,'none')
+			blk = Block(blk.blk_id,blk.block_type,blk.voterchainindex,blk.parent_id,blk.trxn_list,blk.proposer_content,blk.voterblock_content,blk.level,None)
 			node_list[node_id].orphan_blocks.append(blk)
 			node_list[node_id].timestamp_list.append([blk.blk_id,blk.block_type,blk.voterchainindex,blk.level,env.now,blk.parent_id])
 
@@ -357,22 +381,29 @@ def broadcast_blk(node_id,blk): #checked
 			
 
 	elif blk.block_type == "transaction":
+		print("----------------------------------------------")
 		node_list[node_id].txn_blockpool.append(blk)
 		is_route = True
 
 	if is_route:
 		print('longest chain changed for node %d' % node_id)
-		print('childs of parent = %d' %child_num(node_id,blk.parent_id))
+		# print('childs of parent = %d' %child_num(node_id,blk.parent_id))
 		print("broadcasting block %s at %f" %(blk.blk_id,env.now))
 		for l in node_list[node_id].peers:
 			d_ij = np.random.exponential(96/l.c_ij)
-			blk_size= len(blk.trxn_list)
+			blk_size = 0
+			if(blk.block_type=="proposer"):
+				blk_size = len(blk.proposer_content)
+			elif blk.block_type=="voter" :
+				blk_size = len(blk.voterblock_content)
+			elif blk.block_type =="transaction" :
+				blk_size= len(blk.trxn_list)
 			lat = (l.r_ij+ d_ij+ 8*blk_size/l.c_ij)*(0.001)
 			print('to %d with delay = %f' % (l.j,lat))
 			env.process(route_blk(l.j,blk,lat,node_id))
 		create_blk(node_id)
 
-def get_proposer_blk_i(level):
+def get_proposer_blk_i(node_id,level):
 	proposer_chain = [node_list[node_id].genesis_proposer_blk]
 	for i in range(level):
 		present_level = i
@@ -386,16 +417,22 @@ def get_proposer_blk_i(level):
 
 
 
-def getvoterblkcontent(blk):
+def getvoterblkcontent(node_id,blk):
 	last_proposer_block = node_list[node_id].proposer_block 
 	last_level = last_proposer_block.level
+
 	votes = blk.voterblock_content
+	while len(votes)==0:
+		blk= blk.parent_ptr
+		votes = blk.voterblock_content
+
+	
 	max_level = max([x[0] for x in votes])
 	
 	level = max_level+1
 	voter_block_content = [] 
 	while level <=last_level:
-		proposer_chain_current = get_proposer_blk_i(level)
+		proposer_chain_current = get_proposer_blk_i(node_id,level)
 		voter_blk_id = proposer_chain_current[0].blk_id
 		voter_block_content.append([level,voter_blk_id])
 		level = level+1
@@ -408,8 +445,9 @@ def getvoterblkcontent(blk):
 def create_blk(node_id): # checked
 	node_list[node_id].blk_cnt = node_list[node_id].blk_cnt+1
 	blk_id = 'b'+str(node_id)+'_'+str(node_list[node_id].blk_cnt)
-	problist = []#we have to assign probs to diff blocks??
-	x = np.random.choice(m+2,1,problist)
+	# problist = []#we have to assign probs to diff blocks??
+	x = np.random.choice(m+2,1,problist).astype(int)[0]
+	print("x="+str(x))
 	if(x==0):#Trxn
 		parent_id = None
 		block_type = "transaction"
@@ -417,9 +455,9 @@ def create_blk(node_id): # checked
 		node_list[node_id].trxn_cnt =node_list[node_id].trxn_cnt+1
 		mining_trxnid = str(node_id)+'_'+str(node_list[node_id].trxn_cnt)
 		trxn_list.append(Trxn(mining_trxnid,-1,node_id,50))
-		calc_bal = get_balance(node_list[node_id].proposer_block)#change get_balance f
-		done_trxns = get_trxns(node_list[node_id].proposer_block)
-		useful_trxns = [ele for ele in node_list[node_id].trxn_pool if ele not in done_trxns]
+		calc_bal = get_balance(node_id,node_list[node_id].proposer_block)#change get_balance f
+		done_trxns = get_trxns(node_id,node_list[node_id].proposer_block)
+		useful_trxns = [ele for ele in node_list[node_id].txn_pool if ele not in done_trxns]
 		for t in useful_trxns:#check how many to include in a trxn blk
 			if(((calc_bal[t.payer]-t.coins)>=0) and len(trxn_list)<1000):#change number from 1000
 				trxn_list.append(t)
@@ -436,7 +474,7 @@ def create_blk(node_id): # checked
 		parent_id = node_list[node_id].proposer_block.blk_id
 		block_type = "proposer"
 		txn_blk_list = []
-		done_txn_blks = get_txn_blks(node_id[node_id].proposer_block)#have to write this new function??
+		done_txn_blks = get_txn_blks(node_id,node_list[node_id].proposer_block)#have to write this new function??
 		useful_trxn_blks = [ele for ele in node_list[node_id].txn_blockpool if ele not in done_txn_blks]
 		txn_blk_list = useful_trxn_blks
 		level = node_list[node_id].proposer_block.level+1
@@ -448,9 +486,14 @@ def create_blk(node_id): # checked
 		new_blk = Block(blk_id,block_type,voterchainindex,parent_id,trxn_list,proposer_content,voterblock_content,level,parent_ptr)
 
 	else:#voterchain-2
+		voterchainindex = x-2
+		# print(voterchainindex)
+		# node = node_list[node_id]
+		# voterchains = node.voterchains
+		# voterchain = voterchains[voterchainindex]
 		parent_id = node_list[node_id].voterchains[x-2].blk_id
 		block_type = "voter"
-		voterchainindex = x-2
+		
 
 		voterblock_content = getvoterblkcontent(node_id,node_list[node_id].voterchains[x-2]) #the output of this funcion is
 																			# list of (index,blk_ids))
@@ -473,7 +516,7 @@ def create_blk(node_id): # checked
 			# parent_ptr = node_list[node_id].mining_blk
 			# new_blk = Block(blk_id,parent_id,trxn_list,level,parent_ptr)
 
-	print('Block %s is created at t = %f with num_trxns = %d' % (blk_id,env.now,len(trxn_list)))
+	print('Block %s is created at t = %f ' % (blk_id,env.now))
 	print('parent_blk_id = %s' %parent_id)
 	# print('trxn list:')
 	# for i in trxn_list:
@@ -500,6 +543,11 @@ for node in node_list:
 		line = line+str(info[0])+','+str(info[1])+','+str(info[2])+','+str(info[3])+'\n'
 	file.write(line)
 	file.close()
+
+print("##############################")
+node = node_list[0]
+print(node.txn_blockpool)
+print(node.txn_pool)
 
 # to do--------------------------------------------------------------------------------------------------------
 
