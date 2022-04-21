@@ -2,7 +2,9 @@
 Implementation of both prism and bitcoin consensus protocol in python
 
 Go to bitcoin directory:
+
 Run:
+
 python3 simulation.py
 
 Enter the number of nodes(n): 10
